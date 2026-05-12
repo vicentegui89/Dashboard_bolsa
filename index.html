@@ -554,7 +554,6 @@
                 .map(q => {
                     const yfSymbol = q.symbol;
                     const exch = q.exchange || '';
-                    // Si el ticker incluye sufijo tipo BBVA.MC, separamos
                     let baseTicker = yfSymbol;
                     let tvPrefix = YF_TO_TV[exch] || '';
                     if (yfSymbol.includes('.')) {
@@ -573,7 +572,9 @@
         } catch (e) {
             if (myId !== activeRequest) return;
             console.error('Error de búsqueda:', e);
-            dropdown.innerHTML = '<div class="dropdown-empty">Error al buscar. Inténtalo de nuevo.</div>';
+            // Mostrar el error real en pantalla para diagnóstico
+            const msg = e && e.message ? e.message : String(e);
+            dropdown.innerHTML = '<div class="dropdown-empty">Error: ' + escapeHtml(msg) + '</div>';
             dropdown.classList.add('open');
         }
     }
