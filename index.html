@@ -503,43 +503,28 @@
 
     async function searchSymbols(query) {
         const myId = ++activeRequest;
-        const tvUrl = 'https://symbol-search.tradingview.com/symbol_search/v3/?text=' +
+        const url = 'https://symbol-search.tradingview.com/symbol_search/v3/?text=' +
                     encodeURIComponent(query) +
                     '&hl=1&exchange=&lang=es&search_type=&domain=production';
-        // Lista de proxies CORS para usar como fallback si alguno falla.
-        // Necesarios al abrir el HTML como archivo local (file:// o content://)
-        // donde el navegador bloquea fetch a dominios externos.
-        const proxies = [
-            u => 'https://corsproxy.io/?' + encodeURIComponent(u),
-            u => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u),
-            u => 'https://api.codetabs.com/v1/proxy/?quest=' + encodeURIComponent(u)
-        ];
-
-        let lastErr = null;
-        for (const buildUrl of proxies) {
-            try {
-                const res = await fetch(buildUrl(tvUrl));
-                if (!res.ok) throw new Error('HTTP ' + res.status);
-                const data = await res.json();
-                if (myId !== activeRequest) return; // otra búsqueda más reciente
-                const items = Array.isArray(data?.symbols) ? data.symbols : [];
-                currentResults = items.slice(0, 20).map(it => ({
-                    symbol: stripTags(it.symbol),
-                    description: stripTags(it.description),
-                    exchange: stripTags(it.exchange || it.exchange_name || ''),
-                    prefix: stripTags(it.prefix || it.exchange || ''),
-                    type: stripTags(it.type || '')
-                }));
-                renderDropdown();
-                return;
-            } catch (e) {
-                lastErr = e;
-                // probar siguiente proxy
-            }
+        try {
+            const res = await fetch(url);
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const data = await res.json();
+            if (myId !== activeRequest) return;
+            const items = Array.isArray(data?.symbols) ? data.symbols : [];
+            currentResults = items.slice(0, 20).map(it => ({
+                symbol: stripTags(it.symbol),
+                description: stripTags(it.description),
+                exchange: stripTags(it.exchange || it.exchange_name || ''),
+                prefix: stripTags(it.prefix || it.exchange || ''),
+                type: stripTags(it.type || '')
+            }));
+            renderDropdown();
+        } catch (e) {
+            if (myId !== activeRequest) return;
+            dropdown.innerHTML = '<div class="dropdown-empty">Error buscando. Revisa tu conexión.</div>';
+            dropdown.classList.add('open');
         }
-        if (myId !== activeRequest) return;
-        dropdown.innerHTML = '<div class="dropdown-empty">Error buscando. Revisa tu conexión.</div>';
-        dropdown.classList.add('open');
     }
 
     function renderDropdown() {
