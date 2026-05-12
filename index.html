@@ -501,42 +501,81 @@
     let currentResults = [];
     let highlightedIdx = -1;
 
+    // Mapa de bolsas Yahoo -> prefijo TradingView. Solo las más comunes.
+    // Si una bolsa no está aquí, se prueba sin prefijo (TradingView suele resolverlo).
+    const YF_TO_TV = {
+        'NMS': 'NASDAQ', 'NGM': 'NASDAQ', 'NCM': 'NASDAQ', 'NAS': 'NASDAQ',
+        'NYQ': 'NYSE', 'PCX': 'NYSE', 'ASE': 'AMEX',
+        'MCE': 'BME',                              // España
+        'PAR': 'EURONEXT', 'AMS': 'EURONEXT', 'BRU': 'EURONEXT', 'LIS': 'EURONEXT',
+        'LSE': 'LSE', 'IOB': 'LSE',
+        'GER': 'XETR', 'FRA': 'FWB',
+        'MIL': 'BIT',
+        'MEX': 'BMV',
+        'TOR': 'TSX', 'VAN': 'TSXV',
+        'SAO': 'BMFBOVESPA',
+        'BUE': 'BCBA',
+        'TLV': 'TASE',
+        'HKG': 'HKEX',
+        'TKS': 'TSE', 'OSA': 'TSE',
+        'KSC': 'KRX', 'KOE': 'KRX',
+        'SHH': 'SSE', 'SHZ': 'SZSE',
+        'TAI': 'TWSE',
+        'BSE': 'BSE', 'NSI': 'NSE',
+        'ASX': 'ASX',
+        'CCY': 'FX',
+        'CCC': 'CRYPTO'
+    };
+
+    function fetchWithTimeout(url, ms) {
+        return new Promise((resolve, reject) => {
+            const ctrl = new AbortController();
+            const t = setTimeout(() => { ctrl.abort(); reject(new Error('timeout')); }, ms);
+            fetch(url, { signal: ctrl.signal })
+                .then(r => { clearTimeout(t); r.ok ? resolve(r) : reject(new Error('HTTP ' + r.status)); })
+                .catch(err => { clearTimeout(t); reject(err); });
+        });
+    }
+
     async function searchSymbols(query) {
         const myId = ++activeRequest;
-        const tvUrl = 'https://symbol-search.tradingview.com/symbol_search/v3/?text=' +
-                    encodeURIComponent(query) +
-                    '&hl=1&exchange=&lang=es&search_type=&domain=production';
-        // Proxies CORS públicos como fallback. TradingView no permite llamadas
-        // directas desde otros dominios, así que pasamos por intermediarios.
-        const proxies = [
-            u => 'https://corsproxy.io/?' + encodeURIComponent(u),
-            u => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u),
-            u => 'https://api.codetabs.com/v1/proxy/?quest=' + encodeURIComponent(u)
-        ];
+        // Yahoo Finance search: público y con CORS habilitado.
+        const url = 'https://query2.finance.yahoo.com/v1/finance/search?q=' +
+                    encodeURIComponent(query) + '&quotesCount=20&newsCount=0&lang=es-ES&region=ES';
 
-        for (const buildUrl of proxies) {
-            try {
-                const res = await fetch(buildUrl(tvUrl));
-                if (!res.ok) throw new Error('HTTP ' + res.status);
-                const data = await res.json();
-                if (myId !== activeRequest) return;
-                const items = Array.isArray(data?.symbols) ? data.symbols : [];
-                currentResults = items.slice(0, 20).map(it => ({
-                    symbol: stripTags(it.symbol),
-                    description: stripTags(it.description),
-                    exchange: stripTags(it.exchange || it.exchange_name || ''),
-                    prefix: stripTags(it.prefix || it.exchange || ''),
-                    type: stripTags(it.type || '')
-                }));
-                renderDropdown();
-                return;
-            } catch (e) {
-                // probar siguiente proxy
-            }
+        try {
+            const res = await fetchWithTimeout(url, 8000);
+            const data = await res.json();
+            if (myId !== activeRequest) return;
+
+            const quotes = Array.isArray(data?.quotes) ? data.quotes : [];
+            currentResults = quotes
+                .filter(q => q.symbol)
+                .map(q => {
+                    const yfSymbol = q.symbol;
+                    const exch = q.exchange || '';
+                    // Si el ticker incluye sufijo tipo BBVA.MC, separamos
+                    let baseTicker = yfSymbol;
+                    let tvPrefix = YF_TO_TV[exch] || '';
+                    if (yfSymbol.includes('.')) {
+                        baseTicker = yfSymbol.split('.')[0];
+                    }
+                    const tvSymbol = tvPrefix ? (tvPrefix + ':' + baseTicker) : baseTicker;
+                    return {
+                        tvSymbol: tvSymbol,
+                        yfSymbol: yfSymbol,
+                        description: q.longname || q.shortname || q.symbol,
+                        exchange: q.exchDisp || exch,
+                        type: q.quoteType || q.typeDisp || ''
+                    };
+                });
+            renderDropdown();
+        } catch (e) {
+            if (myId !== activeRequest) return;
+            console.error('Error de búsqueda:', e);
+            dropdown.innerHTML = '<div class="dropdown-empty">Error al buscar. Inténtalo de nuevo.</div>';
+            dropdown.classList.add('open');
         }
-        if (myId !== activeRequest) return;
-        dropdown.innerHTML = '<div class="dropdown-empty">Error buscando. Revisa tu conexión.</div>';
-        dropdown.classList.add('open');
     }
 
     function renderDropdown() {
@@ -550,17 +589,14 @@
         currentResults.forEach((r, i) => {
             const item = document.createElement('div');
             item.className = 'dropdown-item';
-            const fullSymbol = (r.prefix ? r.prefix + ':' : '') + r.symbol;
-            item.dataset.symbol = fullSymbol;
-            item.dataset.name = r.description || r.symbol;
             item.innerHTML = `
                 <div style="min-width:0;">
-                    <div class="ticker">${escapeHtml(r.symbol)}</div>
+                    <div class="ticker">${escapeHtml(r.tvSymbol)}</div>
                     <div class="desc">${escapeHtml(r.description || '')}</div>
                 </div>
                 <div class="right">
                     ${r.type ? `<div class="type">${escapeHtml(r.type)}</div>` : ''}
-                    <div>${escapeHtml(r.exchange || r.prefix || '')}</div>
+                    <div>${escapeHtml(r.exchange || '')}</div>
                 </div>
             `;
             item.onclick = () => selectResult(i);
@@ -583,8 +619,8 @@
     function selectResult(i) {
         const r = currentResults[i];
         if (!r) return;
-        const fullSymbol = (r.prefix ? r.prefix + ':' : '') + r.symbol;
-        const displayName = r.description || r.symbol;
+        const fullSymbol = r.tvSymbol;
+        const displayName = r.description || r.tvSymbol;
         if (assets.some(a => a.symbol === fullSymbol)) {
             formError.textContent = 'Ese símbolo ya está añadido.';
             return;
